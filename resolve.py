@@ -2,30 +2,9 @@
 # в конкретные пакеты, которые необходимо собрать.
 
 
-
-
-# заглушка, это dataclass из parser.py, потом просто импортом этого файлика решится вопрос
-#
 from __future__ import annotations
-from dataclasses import dataclass, field
-from pathlib import Path
-
-@dataclass
-class PackageSpec:
-    name: str # имя главного пакета
-    provides: set[str] = field(default_factory=set) # что предоставляет пакет
-    build_requires: set[str] = field(default_factory=set) # что требует для сборки пакет
-    source_file: Path | None = None # путь к исходному .spec файлу
-    def __repr__(self) -> str:
-        return (
-            f"PackageSpec(name={self.name!r}, "
-            f"provides={sorted(self.provides)}, "
-            f"build_requires={sorted(self.build_requires)})"
-        )
-
-
-
-
+from collections import deque
+from parser import PackageSpec
 
 
 def choose_provider(
@@ -33,6 +12,7 @@ def choose_provider(
     providers: set[str],
     available_repo: set[str],
     final_to_build: set[str],
+    available_specs: set[str],
 ) -> tuple[str | None, str | None]:
     """
     Возвращает:
@@ -42,24 +22,45 @@ def choose_provider(
     if not providers:
         return None, f"Не найден provider для зависимости {req!r}"
 
+    note = None
+    if len(providers) > 1:
+        note = (
+            f"Для зависимости {req!r} найдено несколько provider'ов "
+            f"{sorted(providers)}"
+        )
+
 
     repo_candidates = sorted(p for p in providers if p in available_repo)
     if repo_candidates:
-        return repo_candidates[0], None
+        chosen = repo_candidates[0]
+        if note is not None:
+            note += f"; выбран уже доступный в repo {chosen!r}"
+
+        return chosen, note
 
     build_candidates = sorted(p for p in providers if p in final_to_build)
     if build_candidates:
-        return build_candidates[0], None
+        chosen = build_candidates[0]
+        if note is not None:
+            note += f"; выбран уже включённый в сборку {chosen!r}"
+
+        return chosen, note
+
+    spec_candidates = sorted(p for p in providers if p in available_specs)
+    if spec_candidates:
+        chosen = spec_candidates[0]
+        if note is not None:
+            note += f"; выбран пакет, для которого есть локальный spec {chosen!r}"
+
+        return chosen, note
+
 
     chosen = sorted(providers)[0]
 
-    if len(providers) > 1:
-        return chosen, (
-            f"Для зависимости {req!r} найдено несколько provider'ов "
-            f"{sorted(providers)}; выбран {chosen!r}"
-        )
+    if note is not None:
+        note += f"; выбран {chosen!r}"
 
-    return chosen, None
+    return chosen, note
 
 
 
@@ -117,7 +118,9 @@ def resolve(
     list[str],
     list[str],
 ]:
-    queue = list(requested_to_build)
+    # стабильный порядок старта(чтобы легче было тестить) + deque вместо list
+    queue = deque(sorted(requested_to_build))
+
     final_to_build = set(requested_to_build)
     resolved_deps: dict[str, set[str]] = {}
     warnings: list[str] = []
@@ -125,7 +128,7 @@ def resolve(
 
     processed: set[str] = set()
     while queue:
-        pkg = queue.pop(0)
+        pkg = queue.popleft()
 
         if pkg in processed:
             continue
@@ -138,7 +141,8 @@ def resolve(
             errors.append(f"Не найден spec для пакета {pkg!r}")
             continue
 
-        for req in spec.build_requires:
+        available_specs = set(specs)
+        for req in sorted(spec.build_requires):
             providers = provides_index.get(req, set())
 
             provider, note = choose_provider(
@@ -146,6 +150,7 @@ def resolve(
                 providers=providers,
                 available_repo=available_repo,
                 final_to_build=final_to_build,
+                available_specs=available_specs,
             )
 
 
