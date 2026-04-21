@@ -118,7 +118,6 @@ def resolve(
     list[str],
     list[str],
 ]:
-    # стабильный порядок старта(чтобы легче было тестить) + deque вместо list
     queue = deque(sorted(requested_to_build))
 
     final_to_build = set(requested_to_build)
