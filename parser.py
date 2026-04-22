@@ -196,16 +196,10 @@ def _iter_specs(directory: Path) -> Iterator[Path]:
 
 def build_provides_index(specs: dict[str, PackageSpec]) -> dict[str, str]:
     # обратно: capability → package_name. Чтоб удобнее граф строить было
-    index: dict[str, str] = {}
+    index: dict[str, set[str]] = {}
     for pkg_name, spec in specs.items():
         for cap in spec.provides:
-            if cap in index and index[cap] != pkg_name:
-                _warn(
-                    f"Capability {cap!r} предоставляется двумя пакетами: "
-                    f"{index[cap]!r} и {pkg_name!r} — берем первый: {index[cap]!r}"
-                )
-            else:
-                index[cap] = pkg_name
+            index.setdefault(cap, set()).add(pkg_name)
     return index
 
 def main() -> None:
