@@ -122,8 +122,103 @@ def case_missing_provider():
     return resolve(specs, provides_index, available_repo, requested_to_build)
 
 
+def case_shared_dependency():
+    specs = {
+        "app1": PackageSpec(
+            name="app1",
+            provides={"app1"},
+            build_requires={"gcc"},
+        ),
+        "app2": PackageSpec(
+            name="app2",
+            provides={"app2"},
+            build_requires={"gcc"},
+        ),
+        "gcc": PackageSpec(
+            name="gcc",
+            provides={"gcc"},
+            build_requires=set(),
+        ),
+    }
+
+    provides_index = {
+        "app1": {"app1"},
+        "app2": {"app2"},
+        "gcc": {"gcc"},
+    }
+
+    available_repo = set()
+    requested_to_build = {"app1", "app2"}
+
+    return resolve(specs, provides_index, available_repo, requested_to_build)
+
+def case_cycle_dependency():
+    specs = {
+        "gcc": PackageSpec(
+            name="gcc",
+            provides={"gcc"},
+            build_requires={"glibc"},
+        ),
+        "glibc": PackageSpec(
+            name="glibc",
+            provides={"glibc"},
+            build_requires={"gcc"},
+        ),
+    }
+
+    provides_index = {
+        "gcc": {"gcc"},
+        "glibc": {"glibc"},
+    }
+
+    available_repo = set()
+    requested_to_build = {"gcc"}
+
+    return resolve(specs, provides_index, available_repo, requested_to_build)
+
+def case_empty_dependencies():
+    specs = {
+        "binutils": PackageSpec(
+            name="binutils",
+            provides={"binutils"},
+            build_requires=set(),
+        ),
+    }
+
+    provides_index = {
+        "binutils": {"binutils"},
+    }
+
+    available_repo = set()
+    requested_to_build = {"binutils"}
+
+    return resolve(specs, provides_index, available_repo, requested_to_build)
+
+def case_self_dependency():
+    specs = {
+        "gcc": PackageSpec(
+            name="gcc",
+            provides={"gcc"},
+            build_requires={"gcc"},
+        ),
+    }
+
+    provides_index = {
+        "gcc": {"gcc"},
+    }
+
+    available_repo = set()
+    requested_to_build = {"gcc"}
+
+    return resolve(specs, provides_index, available_repo, requested_to_build)
+
+
 if __name__ == "__main__":
     debug_output("simple_chain", case_simple_chain())
     debug_output("already_in_repo", case_already_in_repo())
     debug_output("multiple_providers", case_multiple_providers())
     debug_output("missing_provider", case_missing_provider())
+    debug_output("shared_dependency", case_shared_dependency())
+    debug_output("cycle_dependency", case_cycle_dependency())
+    debug_output("empty_dependencies", case_empty_dependencies())
+    debug_output("self_dependency", case_self_dependency())
