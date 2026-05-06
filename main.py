@@ -11,7 +11,6 @@ import sys
 from parser import parse_specs_dir, build_provides_index
 from resolve import resolve
 from planner import build_plan
-from bootstrap_handler import apply_bootstrap
 
 
 def read_package_list(path: Path) -> set[str]:
@@ -23,7 +22,6 @@ def read_package_list(path: Path) -> set[str]:
         if line and not line.startswith("#"):
             result.add(line)
     return result
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -43,24 +41,39 @@ def main():
             provides_index[pkg] = {pkg}
 
     unknown = requested_to_build - set(specs.keys())
-    already_in_repo = unknown & available_repo
-    truly_unknown = unknown - available_repo
-
-    for pkg in sorted(already_in_repo):
-        print(f"[warn] {pkg!r} запрошен к сборке, но уже есть в репозитории — пропускаем", file=sys.stderr)
-
-    if truly_unknown:
-        for pkg in sorted(truly_unknown):
-            print(f"[error] Пакет {pkg!r} не найден ни в specs, ни в репозитории", file=sys.stderr)
+    if unknown:
+        for pkg in sorted(unknown):
+            if pkg in available_repo:
+                print(
+                    f"[error] Нельзя пересобрать пакет {pkg!r}: "
+                    f"он есть в репозитории, но для него не найден spec-файл.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"[error] Пакет {pkg!r} запрошен к сборке, "
+                    f"но не найден ни среди spec-файлов, ни в репозитории.",
+                    file=sys.stderr,
+                )
         sys.exit(1)
 
-    requested_to_build -= available_repo
+    for pkg in sorted(requested_to_build & available_repo):
+         print(
+            f"[info] Пакет {pkg!r} уже есть в репозитории, "
+            f"но он указан в списке запрошенных пакетов, поэтому будет пересобран.",
+            file=sys.stderr,
+        )
 
     if not requested_to_build:
-        print(json.dumps({"warnings": [], "plan": {
-            "packages_graph": {}, "components": [], "stages": [],
-            "bootstrap_algorithm": {"type": "none", "message": "Все пакеты уже доступны"}
-        }}, indent=2, ensure_ascii=False))
+        print(json.dumps({
+            "warnings": [],
+            "plan": {
+                "packages_graph": {},
+                "repo_requires": {},
+                "components": [],
+                "stages": [],
+            }
+        }, indent=2, ensure_ascii=False))
         return
 
     resolved_deps, final_to_build, warnings, errors = resolve(
@@ -76,13 +89,37 @@ def main():
             print(f"  - {e}", file=sys.stderr)
         sys.exit(1)
 
-    plan = build_plan(final_to_build, resolved_deps)
-    final_plan = apply_bootstrap(plan)
+    plan = build_plan(final_to_build, resolved_deps, available_repo)
+
+    cycle_stages = [
+        stage
+        for stage in plan["stages"]
+        if stage["type"] == "cycle"
+    ]
+
+    if cycle_stages:
+        print(json.dumps({
+            "warnings": warnings,
+            "error": {
+                "type": "unresolved_cycle",
+                "message": (
+                    "Невозможно построить план сборки. "
+                    "Некоторые пакеты зависят друг от друга по кругу, "
+                    "и эту зависимость нельзя закрыть пакетами из репозитория. "
+                    "Первая сборка не сможет начаться, потому что для нее уже нужен "
+                    "один из пакетов этого же цикла."
+                ),
+                "cycle_stages": cycle_stages,
+            },
+            "analysis": plan,
+        }, indent=2, ensure_ascii=False))
+        sys.exit(1)
 
     output = {
         "warnings": warnings,
-        "plan": final_plan,
+        "plan": plan,
     }
+
     print(json.dumps(output, indent=2, ensure_ascii=False))
 
 
