@@ -18,19 +18,34 @@ class Stage:
 def normalize_graph(
     to_build: Iterable[str],
     deps: dict[str, Iterable[str]],
-) -> dict[str, set[str]]:
+    available_repo: Iterable[str] = (),
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     """
-    Строит граф только по пакетам из to_build
-    Ребро A -> B означает -> A зависит от B, B надо собрать раньше
+    Строит граф 
+    Ребро A -> B добавляется только если:
+    - A зависит от B
+    - B тоже надо собрать
+    - B НЕ доступен в исходном репозитории
+
+    Если B уже есть в репозитории, зависимость можно закрыть старой версией B,
+    поэтому A не обязан ждать новую сборку B.
     """
     to_build_set = set(to_build)
+    available_set = set(available_repo)
     graph: dict[str, set[str]] = {}
+    repo_requires: dict[str, set[str]] = {}
 
     for pkg in to_build_set:
-        raw_deps = set(deps.get(pkg, []))
-        graph[pkg] = raw_deps & to_build_set
+        graph[pkg] = set()
+        repo_requires[pkg] = set()
 
-    return graph
+        for dep in deps.get(pkg, []):
+            if dep in available_set:
+                repo_requires[pkg].add(dep)
+            elif dep in to_build_set:
+                graph[pkg].add(dep)
+
+    return graph, repo_requires
 
 
 def tarjan_scc(graph: dict[str, set[str]]) -> list[list[str]]:
@@ -167,14 +182,16 @@ def top_sort_stages(stage_deps: dict[int, set[int]]) -> list[int]:
 def build_plan(
     to_build: Iterable[str],
     deps: dict[str, Iterable[str]],
+    available_repo: Iterable[str] = (),
 ) -> dict:
     """
     Возвращает JSON структуру:
     - packages_graph
+    - repo_requires
     - components
     - stages
     """
-    graph = normalize_graph(to_build, deps)
+    graph, repo_requires = normalize_graph(to_build, deps, available_repo)
     components = tarjan_scc(graph)
     stage_deps, _ = build_stage_graph(graph, components)
     topo_order = top_sort_stages(stage_deps)
@@ -202,6 +219,11 @@ def build_plan(
 
     return {
         "packages_graph": {pkg: sorted(graph[pkg]) for pkg in sorted(graph)},
+        "repo_requires": {
+            pkg: sorted(reqs)
+            for pkg, reqs in sorted(repo_requires.items())
+            if reqs
+        },
         "components": [
             {
                 "packages": comp,
@@ -217,6 +239,14 @@ def build_plan(
                 "depends_on": stage.depends_on,
                 "internal_edges": stage.internal_edges,
                 "bootstrap_required": stage.bootstrap_required,
+                "message": (
+                    "Эти пакеты образуют круговую зависимость. "
+                    "Такой этап не является готовым шагом сборки: "
+                    "он добавлен в вывод только для диагностики ошибки."
+                    if stage.type == "cycle"
+                    else
+                    "Компонента не содержит циклов, пакет собирается обычным образом."
+                ),
             }
             for stage in stages
         ],
