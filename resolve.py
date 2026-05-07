@@ -64,6 +64,68 @@ def choose_provider(
 
 
 
+def build_reverse_dependencies(
+    specs: dict[str, PackageSpec],
+    provides_index: dict[str, set[str]],
+) -> dict[str, set[str]]:
+    """
+    Строит обратный граф зависимостей.
+
+    Если пакет A имеет BuildRequires: B,
+    то в обратном графе появляется ребро:
+    B -> A
+
+    То есть по пакету можно найти все пакеты,
+    которые от него зависят.
+    """
+    reverse_deps: dict[str, set[str]] = {}
+
+    available_specs = set(specs)
+
+    for pkg, spec in specs.items():
+        for req in sorted(spec.build_requires):
+            providers = provides_index.get(req, set())
+
+            provider, _ = choose_provider(
+                req=req,
+                providers=providers,
+                available_repo=set(),
+                final_to_build=set(),
+                available_specs=available_specs,
+            )
+
+            if provider is None:
+                continue
+
+
+            reverse_deps.setdefault(provider, set()).add(pkg)
+
+    return reverse_deps
+
+def expand_with_dependents(
+    requested_to_build: set[str],
+    reverse_deps: dict[str, set[str]],
+) -> set[str]:
+    """
+    Расширяет requested_to_build пакетами, которые прямо или косвенно
+    зависят от исходно запрошенных пакетов.
+    """
+    expanded = set(requested_to_build)
+    queue = deque(sorted(requested_to_build))
+
+    while queue:
+        pkg = queue.popleft()
+
+        for dependent in sorted(reverse_deps.get(pkg, set())):
+            if dependent in expanded:
+                continue
+
+            expanded.add(dependent)
+            queue.append(dependent)
+
+    return expanded
+
+
 
 # Параметры:
 # - specs: dict[str, PackageSpec]
@@ -87,6 +149,11 @@ def choose_provider(
 #     исходный список пакетов, которые требуется собрать;
 #     используется как начальное множество, которое затем расширяется
 #     транзитивными зависимостями
+#
+# - rebuild_dependents: bool
+#     если True, перед обычным раскрытием BuildRequires множество requested_to_build
+#     расширяется всеми пакетами, которые прямо или косвенно зависят от исходно
+#     запрошенных пакетов
 #
 # Возвращает:
 # - resolved_deps: dict[pkg → set[pkg]]
@@ -112,12 +179,24 @@ def resolve(
     provides_index: dict[str, set[str]],
     available_repo: set[str],
     requested_to_build: set[str],
+    rebuild_dependents: bool = False,
 ) -> tuple[
     dict[str, set[str]],
     set[str],
     list[str],
     list[str],
 ]:
+    if rebuild_dependents:
+        reverse_deps = build_reverse_dependencies(
+            specs=specs,
+            provides_index=provides_index,
+        )
+
+        requested_to_build = expand_with_dependents(
+            requested_to_build=requested_to_build,
+            reverse_deps=reverse_deps,
+        )
+
     queue = deque(sorted(requested_to_build))
 
     final_to_build = set(requested_to_build)
