@@ -1,6 +1,7 @@
 """
 Запуск:
-    python3 main.py ./specs ./available.txt ./required.txt
+    python3 main.py ./specs ./available.txt ./required.txt --rebuild-dependents
+    (по умолчанию rebuild-dependents = False)
 """
 
 from pathlib import Path
@@ -28,6 +29,11 @@ def main():
     parser.add_argument("specs_dir", type=Path)
     parser.add_argument("available_repo", type=Path)
     parser.add_argument("requested", type=Path)
+    parser.add_argument(
+        "--rebuild-dependents",
+        action="store_true",
+        help="пересобрать пакеты, которые зависят от запрошенных"
+    )
     args = parser.parse_args()
 
     specs = parse_specs_dir(args.specs_dir, ignore_errors=False)
@@ -81,6 +87,7 @@ def main():
         provides_index=provides_index,
         available_repo=available_repo,
         requested_to_build=requested_to_build,
+        ### rebuild_dependents=args.rebuild_dependents
     )
 
     if errors:

@@ -1,6 +1,6 @@
 """
-Запуск:
-    pytest tests/tests.py -v
+Запуск (из папки tests):
+    pytest tests.py -v
 
 Структура теста:
     run_main(required, available) -> subprocess.CompletedProcess
@@ -29,7 +29,7 @@ COMMON_AVAILABLE = [
     "gcc-gfortran", "gcc-gnat", "gcc-go", "gcc-objc", "gcc-objc++",
     "libgnat", "pkgconfig", "glibc-devel", "glibc-static",
     "perl(Data::Dumper)", "perl(Text::ParseWords)", "perl-generators",
-    "perl(Thread::Queue)", "perl(threads)",
+    "perl(Thread::Queue)", "perl(threads)", "gcc"
 ]
 
 AUTOCONF_AVAILABLE = ["m4", "help2man"]
@@ -158,7 +158,7 @@ def run_main(specs_dir: Path, tmp_path: Path):
 
 
 def test_required_gcc(run_main):
-    # gcc требует сборки всего тулчейна включая цикл gcc <-> binutils
+    # gcc требует сборки всего тулчейна, даже для пересборки
     result = run_main(["gcc"], COMMON_AVAILABLE)
     assert result.returncode == 0, f"stderr:\n{result.stderr}"
 
@@ -168,11 +168,40 @@ def test_required_gcc(run_main):
     assert is_dag(stages)
     all_pkgs = {pkg for s in stages for pkg in s["packages"]}
     assert {"gcc", "binutils", "isl"}.issubset(all_pkgs)
-    assert check_cycle_stages(stages, {"gcc", "binutils"})
+    #assert check_cycle_stages(stages, {"gcc", "binutils"})
 
+def test_required_gcc_cycle_error(run_main):
+    # В available нет ни gcc, ни binutils -> ожидаем ошибку unresolved_cycle
+    common_without_gcc = COMMON_AVAILABLE.copy()
+    common_without_gcc.remove("gcc")
+    result = run_main(["gcc"], common_without_gcc)
+    assert result.returncode != 0
+    output = extract_json(result.stdout)
+    assert output["error"]["type"] == "unresolved_cycle"
 
-def test_required_binutils(run_main):
-    # binutils тоже тянет весь цикл, план должен совпадать по составу с gcc 
+def test_cycle_resolved_by_available_repo(run_main):
+    #Цикл gcc - binutils разрывается, если gcc есть в available. при этом gcc пересобирается
+    result = run_main(["gcc"], COMMON_AVAILABLE)
+    assert result.returncode == 0
+    output = extract_json(result.stdout)
+    stages = output["plan"]["stages"]
+    all_pkgs = {p for s in stages for p in s["packages"]}
+    assert "gcc" in all_pkgs
+    assert "binutils" in all_pkgs
+    assert all(s["type"] != "cycle" for s in stages)
+
+def test_unresolved_cycle_without_available_packages(run_main):
+    # Цикл gcc - binutils при отсутствии обоих в available -> ошибка unresolved_cycle
+    common_without_gcc = COMMON_AVAILABLE.copy()
+    common_without_gcc.remove("gcc")
+    result = run_main(["gcc"], common_without_gcc)
+    assert result.returncode != 0
+    output = extract_json(result.stdout)
+    assert output["error"]["type"] == "unresolved_cycle"
+    cycle_stages = output["error"]["cycle_stages"]
+    assert any("gcc" in stage["packages"] and "binutils" in stage["packages"] for stage in cycle_stages)
+
+def test_required_binutils_and_only_once_in_plan(run_main):
     result = run_main(["binutils"], COMMON_AVAILABLE)
     assert result.returncode == 0, f"stderr:\n{result.stderr}"
 
@@ -180,9 +209,10 @@ def test_required_binutils(run_main):
     stages = output["plan"]["stages"]
 
     assert is_dag(stages)
-    all_pkgs = {pkg for s in stages for pkg in s["packages"]}
-    assert {"binutils", "gcc", "isl"}.issubset(all_pkgs)
-    assert check_cycle_stages(stages, {"gcc", "binutils"})
+    all_pkgs = [pkg for s in stages for pkg in s["packages"]]
+    assert "binutils" in all_pkgs
+    assert all_pkgs.count("binutils") == 1
+    #assert check_cycle_stages(stages, {"gcc", "binutils"})
 
 
 def test_required_isl_one_stage(run_main):
@@ -265,14 +295,17 @@ def test_required_libtool_builds_autoconf_and_automake(run_main):
         assert stage["type"] == "acyclic"
 
 
-def test_required_package_skipped_if_already_available(run_main):
-    # Пакет из build_list уже в репо — план пустой
+def test_required_package_not_skipped_if_already_available(run_main):
     available = list(dict.fromkeys(COMMON_AVAILABLE + ["isl"]))
     result = run_main(["isl"], available)
     assert result.returncode == 0, f"stderr:\n{result.stderr}"
 
     output = extract_json(result.stdout)
-    assert len(output["plan"]["stages"]) == 0
+    stages = output["plan"]["stages"]
+
+    assert is_dag(stages)
+    all_pkgs = {pkg for s in stages for pkg in s["packages"]}
+    assert "isl" in all_pkgs
 
 
 def test_no_duplicate(run_main):
@@ -304,15 +337,15 @@ def test_shared_dependency_no_duplicate(run_main):
 
 
 @pytest.mark.parametrize("pkg", ["isl", "binutils"])
-def test_package_fully_skipped_if_in_repo(run_main, pkg):
-    # Пакет запрошен к сборке, но уже есть в репо — он не появляется в плане
+def test_package_builds_even_if_in_repo(run_main, pkg):
+    # Пакет запрошен к сборке, но уже есть в репо — все равно добавляем
     available = list(dict.fromkeys(COMMON_AVAILABLE + [pkg]))
     result = run_main([pkg], available)
     assert result.returncode == 0, f"stderr:\n{result.stderr}"
 
     output = extract_json(result.stdout)
     all_pkgs = {p for s in output["plan"]["stages"] for p in s["packages"]}
-    assert pkg not in all_pkgs
+    assert pkg in all_pkgs
 
 
 def test_missing_required_package_errors(run_main):
@@ -332,7 +365,7 @@ def test_empty_required_list_returns_empty_plan(run_main):
 
 
 def test_transitive_dependency_not_in_repo(run_main):
-    # Транзитивная зависимость которой нет в репо должна попасть в план
+    # Транзитивная зависимость которой нет в репо, должна попасть в план
     result = run_main(["libtool"], COMMON_AVAILABLE)
     assert result.returncode == 0, f"stderr:\n{result.stderr}"
 
@@ -344,7 +377,7 @@ def test_transitive_dependency_not_in_repo(run_main):
 
 
 def test_transitive_dependency_in_repo(run_main):
-    # Транзитивная зависимость которая есть в репо не должна тянуться в план
+    # Транзитивная зависимость которая есть в репо, не должна тянуться в план
     available = list(dict.fromkeys(COMMON_AVAILABLE + ["isl"]))
     result = run_main(["gcc"], available)
     assert result.returncode == 0, f"stderr:\n{result.stderr}"
@@ -355,33 +388,6 @@ def test_transitive_dependency_in_repo(run_main):
     assert "isl" not in all_pkgs
     assert "gcc" in all_pkgs
 
-
-def test_bootstrap_plan_is_dag(run_main):
-    # После разворачивания bootstrap-циклов итоговый план должен быть DAG
-    result = run_main(["gcc"], COMMON_AVAILABLE)
-    assert result.returncode == 0, f"stderr:\n{result.stderr}"
-
-    output = extract_json(result.stdout)
-    stages = output["plan"]["stages"]
-
-    assert is_dag(stages), "bootstrap-план содержит цикл в depends_on"
-
-
-def test_gcc_and_binutils_produce_same_plan(run_main):
-    # Запрос gcc и запрос binutils должны давать одинаковый набор пакетов
-    result_gcc = run_main(["gcc"], COMMON_AVAILABLE)
-    result_binutils = run_main(["binutils"], COMMON_AVAILABLE)
-
-    assert result_gcc.returncode == 0
-    assert result_binutils.returncode == 0
-
-    pkgs_gcc = {p for s in extract_json(result_gcc.stdout)["plan"]["stages"]
-                for p in s["packages"]}
-    pkgs_binutils = {p for s in extract_json(result_binutils.stdout)["plan"]["stages"]
-                     for p in s["packages"]}
-
-    assert len(pkgs_gcc) > 0
-    assert pkgs_gcc == pkgs_binutils
 
 def test_stages_depend_only_on_earlier_stages(run_main):
     # Каждая стадия может зависеть только от стадий с меньшим id
@@ -397,8 +403,8 @@ def test_stages_depend_only_on_earlier_stages(run_main):
             )
 
 
-def test_all_requested_packages_in_plan_or_repo(run_main):
-    # Каждый запрошенный пакет либо появляется в плане, либо уже был в репо
+def test_all_requested_packages_in_plan(run_main):
+    # Каждый запрошенный пакет должен появитсья в плане
     requested = ["autoconf", "automake", "libtool"]
     result = run_main(requested, COMMON_AVAILABLE)
     assert result.returncode == 0, f"stderr:\n{result.stderr}"
@@ -408,5 +414,4 @@ def test_all_requested_packages_in_plan_or_repo(run_main):
 
     for pkg in requested:
         in_plan = pkg in all_pkgs
-        in_repo = pkg in set(COMMON_AVAILABLE)
-        assert in_plan or in_repo, f"{pkg!r} не попал ни в план, ни в репо"
+        assert in_plan, f"{pkg!r} не попал ни в план, ни в репо"
