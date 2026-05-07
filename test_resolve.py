@@ -5,7 +5,7 @@ from resolve import resolve
 
 
 def debug_output(title, result):
-    resolved_deps, final_to_build, warnings, errors = result
+    resolved_deps, final_to_build, warnings, errors, rebuild_reasons = result
 
     print(f"\n=== {title} ===")
     print(json.dumps(
@@ -14,6 +14,7 @@ def debug_output(title, result):
             "final_to_build": sorted(final_to_build),
             "warnings": warnings,
             "errors": errors,
+            "rebuild_reasons": { k: sorted(v) for k, v in sorted(rebuild_reasons.items()) },
         },
         indent=2,
         ensure_ascii=False,
