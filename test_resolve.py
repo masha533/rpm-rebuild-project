@@ -213,6 +213,58 @@ def case_self_dependency():
     return resolve(specs, provides_index, available_repo, requested_to_build)
 
 
+# app1  -> liba
+# app2  -> liba
+# tool1 -> libb
+# liba  -> libb
+def case_rebuild_dependents():
+    specs = {
+        "app1": PackageSpec(
+            name="app1",
+            provides={"app1"},
+            build_requires={"liba"},
+        ),
+        "app2": PackageSpec(
+            name="app2",
+            provides={"app2"},
+            build_requires={"liba"},
+        ),
+        "tool1": PackageSpec(
+            name="tool1",
+            provides={"tool1"},
+            build_requires={"libb"},
+        ),
+        "liba": PackageSpec(
+            name="liba",
+            provides={"liba"},
+            build_requires={"libb"},
+        ),
+        "libb": PackageSpec(
+            name="libb",
+            provides={"libb"},
+            build_requires=set(),
+        ),
+    }
+
+    provides_index = {
+        "app1": {"app1"},
+        "app2": {"app2"},
+        "tool1": {"tool1"},
+        "liba": {"liba"},
+        "libb": {"libb"},
+    }
+
+    available_repo = set()
+    requested_to_build = {"libb"}
+
+    return resolve(
+        specs=specs,
+        provides_index=provides_index,
+        available_repo=available_repo,
+        requested_to_build=requested_to_build,
+        rebuild_dependents=True,
+    )
+
 if __name__ == "__main__":
     debug_output("simple_chain", case_simple_chain())
     debug_output("already_in_repo", case_already_in_repo())
@@ -222,3 +274,4 @@ if __name__ == "__main__":
     debug_output("cycle_dependency", case_cycle_dependency())
     debug_output("empty_dependencies", case_empty_dependencies())
     debug_output("self_dependency", case_self_dependency())
+    debug_output("rebuild_dependents", case_rebuild_dependents())
