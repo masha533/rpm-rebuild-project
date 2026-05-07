@@ -87,7 +87,7 @@ def main():
         provides_index=provides_index,
         available_repo=available_repo,
         requested_to_build=requested_to_build,
-        ### rebuild_dependents=args.rebuild_dependents
+        rebuild_dependents=args.rebuild_dependents
     )
 
     if errors:
