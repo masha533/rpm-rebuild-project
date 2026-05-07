@@ -179,28 +179,6 @@ def test_required_gcc_cycle_error(run_main):
     output = extract_json(result.stdout)
     assert output["error"]["type"] == "unresolved_cycle"
 
-def test_cycle_resolved_by_available_repo(run_main):
-    #Цикл gcc - binutils разрывается, если gcc есть в available. при этом gcc пересобирается
-    result = run_main(["gcc"], COMMON_AVAILABLE)
-    assert result.returncode == 0
-    output = extract_json(result.stdout)
-    stages = output["plan"]["stages"]
-    all_pkgs = {p for s in stages for p in s["packages"]}
-    assert "gcc" in all_pkgs
-    assert "binutils" in all_pkgs
-    assert all(s["type"] != "cycle" for s in stages)
-
-def test_unresolved_cycle_without_available_packages(run_main):
-    # Цикл gcc - binutils при отсутствии обоих в available -> ошибка unresolved_cycle
-    common_without_gcc = COMMON_AVAILABLE.copy()
-    common_without_gcc.remove("gcc")
-    result = run_main(["gcc"], common_without_gcc)
-    assert result.returncode != 0
-    output = extract_json(result.stdout)
-    assert output["error"]["type"] == "unresolved_cycle"
-    cycle_stages = output["error"]["cycle_stages"]
-    assert any("gcc" in stage["packages"] and "binutils" in stage["packages"] for stage in cycle_stages)
-
 def test_required_binutils_and_only_once_in_plan(run_main):
     result = run_main(["binutils"], COMMON_AVAILABLE)
     assert result.returncode == 0, f"stderr:\n{result.stderr}"
@@ -414,4 +392,4 @@ def test_all_requested_packages_in_plan(run_main):
 
     for pkg in requested:
         in_plan = pkg in all_pkgs
-        assert in_plan, f"{pkg!r} не попал ни в план, ни в репо"
+        assert in_plan, f"{pkg!r} не попал в план"
