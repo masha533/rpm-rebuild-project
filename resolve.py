@@ -105,25 +105,30 @@ def build_reverse_dependencies(
 def expand_with_dependents(
     requested_to_build: set[str],
     reverse_deps: dict[str, set[str]],
-) -> set[str]:
+) -> tuple[set[str], dict[str, set[str]]]:
     """
     Расширяет requested_to_build пакетами, которые прямо или косвенно
     зависят от исходно запрошенных пакетов.
     """
     expanded = set(requested_to_build)
-    queue = deque(sorted(requested_to_build))
+    original_requested = set(requested_to_build)
+    rebuild_reasons: dict[str, set[str]] = {}
 
+    queue = deque(sorted(requested_to_build))
     while queue:
         pkg = queue.popleft()
 
         for dependent in sorted(reverse_deps.get(pkg, set())):
+            if dependent not in original_requested:
+                rebuild_reasons.setdefault(dependent, set()).add(pkg)
+
             if dependent in expanded:
                 continue
 
             expanded.add(dependent)
             queue.append(dependent)
 
-    return expanded
+    return expanded, rebuild_reasons
 
 
 
@@ -169,6 +174,9 @@ def expand_with_dependents(
 # - errors: list[str]
 #     критические ошибки (например, зависимость невозможно разрешить)
 #
+# - rebuild_reasons: dict[pkg → set[pkg]]
+#     для пакетов, добавленных из-за rebuild_dependents, хранит пакеты, из-за которых они были добавлены в сборку
+#
 # Гарантии:
 # - в resolved_deps нет абстрактных зависимостей (вроде pkgconfig(...))
 # - пакеты из available_repo не попадают в зависимости
@@ -185,14 +193,16 @@ def resolve(
     set[str],
     list[str],
     list[str],
+    dict[str, set[str]],
 ]:
+    rebuild_reasons: dict[str, set[str]] = {}
     if rebuild_dependents:
         reverse_deps = build_reverse_dependencies(
             specs=specs,
             provides_index=provides_index,
         )
 
-        requested_to_build = expand_with_dependents(
+        requested_to_build, rebuild_reasons = expand_with_dependents(
             requested_to_build=requested_to_build,
             reverse_deps=reverse_deps,
         )
@@ -253,4 +263,4 @@ def resolve(
     for pkg in final_to_build:
         resolved_deps.setdefault(pkg, set())
 
-    return resolved_deps, final_to_build, warnings, errors
+    return resolved_deps, final_to_build, warnings, errors, rebuild_reasons

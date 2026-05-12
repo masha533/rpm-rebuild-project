@@ -82,7 +82,7 @@ def main():
         }, indent=2, ensure_ascii=False))
         return
 
-    resolved_deps, final_to_build, warnings, errors = resolve(
+    resolved_deps, final_to_build, warnings, errors, rebuild_reasons = resolve(
         specs=specs,
         provides_index=provides_index,
         available_repo=available_repo,
@@ -96,7 +96,7 @@ def main():
             print(f"  - {e}", file=sys.stderr)
         sys.exit(1)
 
-    plan = build_plan(final_to_build, resolved_deps, available_repo)
+    plan = build_plan(final_to_build, resolved_deps, available_repo, rebuild_reasons)
 
     cycle_stages = [
         stage
@@ -124,6 +124,7 @@ def main():
 
     output = {
         "warnings": warnings,
+#        "rebuild_reasons": { pkg: sorted(reasons) for pkg, reasons in sorted(rebuild_reasons.items()) },   можно вернуть/добавить, изначально нужно для дебага было
         "plan": plan,
     }
 

@@ -183,6 +183,7 @@ def build_plan(
     to_build: Iterable[str],
     deps: dict[str, Iterable[str]],
     available_repo: Iterable[str] = (),
+    rebuild_reasons: dict[str, Iterable[str]] | None = None,
 ) -> dict:
     """
     Возвращает JSON структуру:
@@ -191,6 +192,8 @@ def build_plan(
     - components
     - stages
     """
+    rebuild_reasons = rebuild_reasons or {}
+
     graph, repo_requires = normalize_graph(to_build, deps, available_repo)
     components = tarjan_scc(graph)
     stage_deps, _ = build_stage_graph(graph, components)
@@ -239,6 +242,10 @@ def build_plan(
                 "depends_on": stage.depends_on,
                 "internal_edges": stage.internal_edges,
                 "bootstrap_required": stage.bootstrap_required,
+                "rebuild_caused_by": {
+                    pkg: sorted(rebuild_reasons[pkg])
+                    for pkg in stage.packages if pkg in rebuild_reasons
+                },
                 "message": (
                     "Эти пакеты образуют круговую зависимость. "
                     "Такой этап не является готовым шагом сборки: "
