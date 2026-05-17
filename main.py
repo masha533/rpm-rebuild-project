@@ -1,8 +1,22 @@
 """
 Запуск:
-    python3 main.py ./specs ./available.txt ./required.txt --rebuild-dependents
-    (по умолчанию rebuild-dependents = False)
+    python3 main.py ./specs ./available.txt ./required.txt
+
+Опции:
+    --rebuild-dependents
+        пересобрать также пакеты, которые зависят от запрошенных
+        (по умолчанию выключено)
+
+    --graphviz-dot graph.dot
+        записать граф зависимостей пакетов в DOT-файл для Graphviz
+
+Пример:
+    python3 main.py ./specs ./available.txt ./required.txt --rebuild-dependents --graphviz-dot graph.dot
+
+Рендер DOT в картинку:
+    dot -Tpng graph.dot -o graph.png
 """
+
 
 from pathlib import Path
 import argparse
@@ -12,6 +26,7 @@ import sys
 from parser import parse_specs_dir, build_provides_index
 from resolve import resolve
 from planner import build_plan
+from graphviz_export import export_packages_graph_to_dot
 
 
 def read_package_list(path: Path) -> set[str]:
@@ -33,6 +48,12 @@ def main():
         "--rebuild-dependents",
         action="store_true",
         help="пересобрать пакеты, которые зависят от запрошенных"
+    )
+    parser.add_argument(
+        "--graphviz-dot",
+        type=Path,
+        default=None,
+        help="записать граф пакетов в DOT-файл для Graphviz",
     )
     args = parser.parse_args()
 
@@ -97,6 +118,10 @@ def main():
         sys.exit(1)
 
     plan = build_plan(final_to_build, resolved_deps, available_repo, rebuild_reasons)
+    if args.graphviz_dot is not None:
+        dot_text = export_packages_graph_to_dot(plan)
+        args.graphviz_dot.write_text(dot_text, encoding="utf-8")
+
 
     cycle_stages = [
         stage
